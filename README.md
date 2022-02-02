@@ -1,3 +1,3 @@
-# JuliaTutorialsTemplate
+# Wordle base-3
 
-See <http://rikhuijzer.github.io/JuliaTutorialsTemplate/> for more information.
+See <http://dmbates.github.io/Wordlebase3/> for more information.
