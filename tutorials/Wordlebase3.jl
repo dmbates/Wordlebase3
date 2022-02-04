@@ -295,7 +295,7 @@ md"""
 And we are done after 2 guesses.
 
 To write a function that plays a game of Wordle, we pass an "oracle" function, which returns the score for a given guess.
-For testing purposes, the oracle is just a call to `score` with a fixed target argument.
+For testing purposes, the oracle is just a call to `score` with a fixed `target` argument.
 Producing a function by fixing one of the arguments to another function is sometimes called [currying](https://en.wikipedia.org/wiki/Currying) and there is a `Fix2` function in Julia to return a function that fixes the second argument of a function like `score`.
 
 If we pick a target at random from `words`, then we can use
@@ -375,9 +375,9 @@ end
 The arguments to `score` can be any type.
 In fact, formally they are of an abstract type called `Any`.
 
-So how do we make sure that they actual arguments make sense for this function?
+So how do we make sure that the actual arguments make sense for this function?
 Well, the first thing that is done with the arguments is to pass them to `zip(guess, target)` to produce pairs of values, `g` and `t`, that can be compared for equality, `g == t`.
-In a sense `score` delegates the task of checking that the arguments are sensible to `zip`.
+In a sense `score` delegates the task of checking that the arguments are sensible to the `zip` function.
 
 For those unfamiliar with zipping two or more iterators, we can check what the result is.
 """
@@ -387,7 +387,7 @@ collect(zip("arise", "rebus"))
 
 # ╔═╡ c876e8b3-59ff-4cb7-a5c3-465b576626a6
 md"""
-(One of the great advantages of dynamically-types languages with a REPL (read-eval-print-loop) like Julia is that we can easily check what `zip` produces in a couple of examples (or even read the documentation returned by `?zip` if we are desperate).
+(One of the great advantages of dynamically-typed languages with a REPL (read-eval-print-loop) like Julia is that we can easily check what `zip` produces in a couple of examples (or even read the documentation returned by `?zip`, if we are desperate).
 
 The rest of the function is a common pattern - initialize `s`, which will be the result, modify `value` in a loop, and return it.
 The Julia expression
@@ -404,7 +404,7 @@ is a *ternary operator* expression (the name is because the operator takes three
 It evaluates the condition, `g == t`, and returns `2` if the condition is true or the value of the Boolean expression `g  ∈ target`, converted to an `Int`, if it is false.
 The Boolean expression will return `false` or `true`, which become `0` or `1` when converted to an `Int`.
 This is one of the few times that we explicitly convert a result to a particular type.
-We do so because `2` is an `Int` and we want the type of the value of the expression to depend on the arguments.
+We do so because `2` is an `Int` and we don't want the type of the value of the expression to depend on the arguments.
 
 The operation of multiplying by 3 and adding 2 or 1 or 0 is an implementation of [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) for evaluating a polynomial.
 
@@ -424,7 +424,7 @@ Applying it as
 will show the type inference is based on concrete types (`String`) for the arguments.
 
 Some argument types are handled more efficiently than others.
-Without going in to details we note that if we take advantage of the fact that we have exactly 5 characters and convert the elements of `words` from `String` to `NTuple{5,Char}`, which is an ordered, fixed-length homogeneous collection.
+Without going in to details we note that we can take advantage of the fact that we have exactly 5 characters and convert the elements of `words` from `String` to `NTuple{5,Char}`, which is an ordered, fixed-length homogeneous collection.
 
 Using the `@benchmark` macro from the `BenchmarkTools` package gives run times of a few tens of nanoseconds for these arguments, and shows that the function applied to the fixed-length collections is faster.
 """
@@ -438,7 +438,7 @@ Using the `@benchmark` macro from the `BenchmarkTools` package gives run times o
 # ╔═╡ 9bb81a4a-7c85-4cba-804a-d9e8a3d06141
 md"""
 That is, the version using the fixed-length structure is nearly 4 times as fast as that using the variable-length `String` structure.
-(Also, for those who know the distinction, tuples can be passed on the stack whereas a `String` must be heap allocated.)
+(For those familiar with what the "stack" and the "heap" are, the main advantage of an `NTuple` is that it can be passed on the stack whereas a `String` must be heap allocated.)
 
 The details aren't as important as the fact that we can exert a high level of control and optimization of very general code and we can test and benchmark the code interactively.
 
@@ -480,6 +480,7 @@ md"""
 Now there is a speedup of more than a factor of 10 for using tuples.
 
 Of course, there is a glaring inefficiency in the `playWordle` function in that the first guess, `"raise"`, is being recalculated for every game.
+We should allow this fixed first guess to be passed as an argument.
 
 While we are revising the function we can clean up a few other places where assumptions on the length of the words is embedded and do some checking of arguments.
 """
