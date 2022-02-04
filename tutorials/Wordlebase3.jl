@@ -17,7 +17,7 @@ This posting presents some [Julia](https://julialang.org) functions motivated by
 Part of the purpose is to illustrate the unique nature of Julia as a dynamically-typed language with a just-in-time (JIT) compiler.
 It allows you to write "generic", both in the common meaning of "general purpose" and in the technical meaning of generic functions, and performative code.
 
-This posting originated from a conversation on the Julia [discourse channel](https://discourse.julialang.org/t/rust-julia-comparison-post/75403) referring to a case where Julia code to perform a certain task was horribly slow - taking over 4 days to determine the "best" initial guess, according to a particular criterion.
+This posting originated from a conversation on the Julia [discourse channel](https://discourse.julialang.org/t/rust-julia-comparison-post/75403) referring to a case where Julia code to perform a certain Wordle-related task was horribly slow - taking over 4 days to determine the "best" initial guess, according to a particular criterion.
 
 In situations like this the Julia community inevitably responds by modifying the code to run much faster.
 Someone joked that we wouldn't be satisfied until we could do that task in less than 1 second.
@@ -69,10 +69,10 @@ PlutoUI.Resource("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Word
 # ╔═╡ 2dfac026-f4bd-47b0-96c0-8babd046758b
 md"""
 Of course, the colors are just one way of summarizing the result of a guess.
+Within a computer program it is easier to use an integer to represent each of the 243 = 3⁵ possible scores.
+An obvious way of mapping the result to an integer is to evaluate the score as it were a 5-digit, base-3 number.
 
-There are 243 = 3⁵ possible scores, each of which corresponds to a 5-digit, base-3 number.
-
-We'll skip the representation of scores as colored tiles and go directly to representing the score as an integer between 0 and 242.
+We'll skip the representation of scores as colored tiles and go directly to representing the score as an integer between 0 and 242, using the function
 """
 
 # ╔═╡ aa5a3223-9616-4148-b3ab-fabf68327dfa
@@ -100,7 +100,9 @@ score("arise", "rebus")
 
 # ╔═╡ 7e558835-7767-477d-a063-066a7d2f2791
 md"""
-That is, the pattern gray, yellow, gray, yellow, yellow corresponds to the base-3 integer `01011`, which is 31 in decimal,
+That is, the pattern gray, yellow, gray, yellow, yellow corresponds to the base-3 integer `01011`, which is 31 in decimal.
+
+Similarly
 """
 
 # ╔═╡ 54d789cb-d5d8-4366-a907-8a38ee66e307
@@ -108,11 +110,11 @@ score("route", "rebus")
 
 # ╔═╡ 32559155-0b36-4f5e-9793-c03f707cfa1e
 md"""
-and the pattern green, gray, yellow, gray, yellow is `20101` in base-3 or 172 in decimal.
+because the pattern green, gray, yellow, gray, yellow is `20101` in base-3 or 172 in decimal.
 
 ## Using a guess and score to filter the set of possible solutions
 
-Now we can represent a simple Wordle strategy.
+Now we can present a simple Wordle strategy.
 
 1. At each turn we have a set of possible targets.
 2. We choose a guess, submit that to the "oracle", which knows the target and returns a score.
@@ -156,7 +158,7 @@ Interestingly this word is not in the set of possible targets.
 md"""
 Choosing a word, or even a non-word, that can't be a target is allowed, and there is some potential for it being useful as a way of screening the possible targets.
 But generally it is not a great strategy to waste a guess that can't be the target, especially when only six guesses are allowed.
-In our strategy described below we always choose a guess from the set of possible targets.
+In our strategy described below we always choose the next guess from the current set of possible targets.
 
 Anyway, continuing with the sample game
 """
@@ -194,7 +196,8 @@ First, if this function is to be called many times, we don't want to allocate st
 Second, for generality, we want to avoid assuming that the number of classes will always be 243.
 If we allocate the storage outside the function then we don't have to build assumptions on its size into the function.
 
-By convention, mutating functions are given names that end in `!`, as a warning to users that calling the function may change the contents of one or more arguments.
+By convention, such "mutating" functions that can change the contents of arguments are given names that end in `!`, as a warning to users that calling the function may change the contents of one or more arguments.
+This is just a convention - the `!` doesn't affect the semantics in any way.
 
 Declare the array of bin sizes
 """
@@ -227,11 +230,19 @@ md"""
 Recall that each of these sizes is both the size the pool and the number of targets that would return this pool.
 That is, there are 168 targets that would return a score of 0 from this guess and the size of the pool after refining by this guess and a score of 0 would be 168.
 
-Thus, the expected pool size after a first guess of "arise" is the sum of the squared sizes divided by the sum of the sizes, which is the number of words.
+Thus, the expected pool size after a first guess of "arise" is the sum of the squared sizes divided by the sum of the sizes.
+
+For the example of the first guess `"arise"` and the original pool, `words`, the expected pool size after refining by the score for this guess is
 """
 
 # ╔═╡ 9aecbe62-7d6e-4311-82b8-4940e068b2a6
 sum(abs2, sizes) / sum(sizes)
+
+# ╔═╡ 1db50e79-21e7-48a6-aab7-c52f1bb05288
+md"""
+This is remarkable.
+We start off with a pool of 2315 possible targets and, with a single guess, will, on average, refining that pool to around 64 possible targets.
+"""
 
 # ╔═╡ 9066998e-a9b2-49e1-97a0-f255f5423e3e
 md"""
@@ -327,10 +338,10 @@ function playWordle(oracle::Function, words)
 end
 
 # ╔═╡ a04a07c4-86b9-47db-95bf-06f4492d960b
-playWordle(oracle, words)
+results = playWordle(oracle, words)
 
 # ╔═╡ 2926c2b6-e5df-4e1a-a03a-5a1c3b738f6f
-oracle("stoic")
+oracle(last(results.guess))
 
 # ╔═╡ cf50cf34-3f1a-4782-986b-3d1685ee2ad8
 md"Alternatively we can generate the oracle in the actual argument to the `playWordle` function"
@@ -387,7 +398,7 @@ collect(zip("arise", "rebus"))
 
 # ╔═╡ c876e8b3-59ff-4cb7-a5c3-465b576626a6
 md"""
-(One of the great advantages of dynamically-typed languages with a REPL (read-eval-print-loop) like Julia is that we can easily check what `zip` produces in a couple of examples (or even read the documentation returned by `?zip`, if we are desperate).
+One of the great advantages of dynamically-typed languages with a REPL (read-eval-print-loop) like Julia is that we can easily check what `zip` produces in a couple of examples (or even read the documentation returned by `?zip`, if we are desperate).
 
 The rest of the function is a common pattern - initialize `s`, which will be the result, modify `value` in a loop, and return it.
 The Julia expression
@@ -400,11 +411,12 @@ An expression like
 ```jl
 g == t ? 2 : Int(g  ∈ target)
 ```
-is a *ternary operator* expression (the name is because the operator takes three arguments).
-It evaluates the condition, `g == t`, and returns `2` if the condition is true or the value of the Boolean expression `g  ∈ target`, converted to an `Int`, if it is false.
+is a *ternary operator* expression (the name comes from the operator taking three arguments).
+It evaluates the condition, `g == t`, and returns `2` if the condition is `true`.
+If the `g == t` is `false` the operator returns the value of the Boolean expression `g  ∈ target`, converted to an `Int`.
 The Boolean expression will return `false` or `true`, which become `0` or `1` when converted to an `Int`.
 This is one of the few times that we explicitly convert a result to a particular type.
-We do so because `2` is an `Int` and we don't want the type of the value of the expression to depend on the arguments.
+We do so because `2` is an `Int` and we don't want the type of the value of the ternary operator expression to change depending on the value of its arguments.
 
 The operation of multiplying by 3 and adding 2 or 1 or 0 is an implementation of [Horner's method](https://en.wikipedia.org/wiki/Horner%27s_method) for evaluating a polynomial.
 
@@ -463,7 +475,7 @@ playWordle(Base.Fix2(score, rand(tuples)), tuples)
 # ╔═╡ 128fdb37-79a4-4e6e-8c0b-e78e307d9830
 md"""
 We can benchmark both versions to see if the speed advantage for tuples carries over to the higher-level calculation.
-However we want to make sure that it is an apples-to-apples comparison so we first select the index of the target then create the oracle from the appropriate vector.
+However we want to make sure that it is an apples-to-apples comparison so we first select the index of the target then create the oracle from that element of the `words` or the `tuples` vector.
 """
 
 # ╔═╡ e3c3bd0a-ba1c-4550-87e9-cf0180781596
@@ -523,11 +535,6 @@ md"Yes, it is much faster, as is the same function applied to tuples."
 
 # ╔═╡ a939119b-6ac4-4322-86bd-22bb6562d268
 @benchmark fastWordle(o, t, f) setup=(o=Base.Fix2(score, tuples[oracleind]); t=tuples; f=NTuple{5,Char}("raise"))
-
-# ╔═╡ a1de17f0-5764-412d-8eff-497597706730
-md"""
-The expression `w -> score("arise", w) == 31` defines an anonymous function (using what is sometimes called the "stabby lambda" syntax) that checks if the score for that guess and word is 31.
-"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -896,6 +903,7 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╠═7cc14ee8-114c-432e-865d-1aa9b757b5f3
 # ╟─7228fb42-f673-4246-99c0-fa0a347391cc
 # ╠═9aecbe62-7d6e-4311-82b8-4940e068b2a6
+# ╟─1db50e79-21e7-48a6-aab7-c52f1bb05288
 # ╟─9066998e-a9b2-49e1-97a0-f255f5423e3e
 # ╠═1e6eabe2-7135-4179-af53-87fffd8e5c0a
 # ╟─ecd9d650-d071-41ad-a81c-c49e0b941dc9
@@ -937,6 +945,5 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╠═c080b635-e58f-4f7b-9b9e-b83719c28f84
 # ╟─af959dbe-4fe7-4484-bf62-05813a8dd73e
 # ╠═a939119b-6ac4-4322-86bd-22bb6562d268
-# ╠═a1de17f0-5764-412d-8eff-497597706730
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
