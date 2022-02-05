@@ -77,8 +77,8 @@ all(w -> length(w) == 5, wordlestrings)
 # ╔═╡ 031aeb1a-f3eb-4256-b7f3-5412b352d4b8
 md"""
 That last expression may look, well, "interesting".
-It is a way of checking that a function, in this case an anonymous function expressed using the "stabby lambda" syntax, returns `true` for each element of an iterator, in this case the vector `wordlestrings`.
-You can read the whole expression as "for each word `w` in `wordlestrings` check that `length(w)` is 5".
+It is a way of checking that if function, in this case an anonymous function expressed using the "stabby lambda" syntax, returns `true` for each element of an iterator, in this case the vector `wordlestrings`.
+You can read the whole expression as "is `length(w)` equal to `5` for each word `w` in `wordlestrings`".
 
 These words are supposed to be exactly 5 letters long but it never hurts to check.
 I've been a data scientist for several decades and one of the first lessons in the field is to [trust, but verify](https://en.wikipedia.org/wiki/Trust%2C_but_verify) any claims about the data you are provided.
@@ -146,10 +146,10 @@ PlutoUI.Resource("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Word
 md"""
 The target is "rebus".
 
-The player's first guess is "arise" and the response, or score, from the oracle is coded as 🟫, 🟨, 🟫, 🟨, 🟨 where 🟫 indicates that the letter is not in the target (neither `a` nor `i` occur in "rebus") and 🟨 indicates that the letter is in the target but not at that position.
+The player's first guess is "arise" and the response, or score, from the oracle is coded as 🟫🟨🟫🟨🟨 where 🟫 indicates that the letter is not in the target (neither `a` nor `i` occur in "rebus") and 🟨 indicates that the letter is in the target but not at that position.
 (I'm using 🟫 instead of a gray square because I can't find a gray square Unicode character.)
 
-The second guess is "route" for which the response is 🟩, 🟫, 🟨, 🟫, 🟨 indicating that the first letter in the guess occurs as the first letter in the target.
+The second guess is "route" for which the response is 🟩🟫🟨🟫🟨 indicating that the first letter in the guess occurs as the first letter in the target.
 
 Of course, the colors are just one way of summarizing the response to a guess.
 Within a computer program it is easier to use an integer to represent each of the 243 = 3⁵ possible scores.
@@ -183,8 +183,8 @@ We can convert back to colored squares if desired.
 
 # ╔═╡ 8f1d2147-2656-4ce2-b18a-cc3a9eccd769
 function tiles(sc)
-	result = Char[]
-	for _ in 1:5
+	result = Char[] # initialize to an empty array of Char
+	for _ in 1:5    # _ indicates we won't use the counter, just loop 5 times
 		sc, r = divrem(sc, 3)
 		push!(result, iszero(r) ? '🟫' : (isone(r) ? '🟨' : '🟩'))
 	end
@@ -196,6 +196,16 @@ md"For example,"
 
 # ╔═╡ 6cae0843-5f9e-4439-b5b4-9292c7818390
 tiles.(score.(("arise", "route", "rules", "rebus"), Ref("rebus")))
+
+# ╔═╡ ef5b9b40-a036-49df-b3ff-54661af71cc6
+md"""
+The use of `Ref` is to make the String, which is an iterator, appear to be a scalar.
+
+We could instead use function composition to evaluate this result
+"""
+
+# ╔═╡ d6beb106-4211-473c-b409-983779c250d7
+(tiles ∘ score).(("arise", "route", "rules", "rebus"), Ref("rebus"))
 
 # ╔═╡ 37c672a3-3850-4d7b-bd13-922c13389d5e
 md"""
@@ -215,7 +225,7 @@ For example,
 """
 
 # ╔═╡ 7f5035be-0414-426e-b8b2-2f4d4f4c6231
-tiles.(oracle196.(("arise", "route", "rules", "rebus")))
+(tiles ∘ oracle196).(("arise", "route", "rules", "rebus"))
 
 # ╔═╡ e6808c28-74d0-4734-a8ce-fd8783994d10
 md"""
@@ -243,7 +253,6 @@ Now we can present a simple Wordle strategy.
 
 Consider step 4 - use a guess and a score to reduce the target pool.
 We could do this with pencil and paper by starting with the list of 2315 words and crossing off those that don't give the particular score from a particular guess.
-
 But that would be tedious, and computers are really good at that kind of thing, so we write a function.
 """
 
@@ -407,7 +416,7 @@ md"""
 ## Optimal guesses at each stage
 
 We now have the tools in place to determine the guess that will produce the smallest expected pool size from a set of possible targets.
-First we will create an `expectedsize!` function that essentially duplicates `binsizes!` except that it returns the expected size.
+First we will create an `expectedsize!` function that just calls `binsizes!` then returns the expected size.
 This will be used in an anonymous function passed to `argmin`.
 """
 
@@ -528,14 +537,14 @@ Of all the calls to `bestguess` in the game this is the most expensive call beca
 
 ## Combining the pool and the initial guess
 
-To ensure that the initial guess is consistent with the pool we should store them as parts of a single structure.
-And while we are at it, we can also create and store the vector to accumulate the bin sizes and do a bit of error checking.
+To ensure that the initial guess is the one generated by the pool we should store them as parts of a single structure.
+And while we are at it, we can also create and store the vector to accumulate the bin sizes and we can do a bit of error checking.
 
 We declare the type
 """
 
 # ╔═╡ 4ab20246-e7d1-4662-ac8f-3a86fa2c1330
-struct GamePool{T}    # T will be the element type
+struct GamePool{T}    # T will be the element type of the pool
 	pool::Vector{T}
 	initial::T
 	sizes::Vector{Int}
@@ -553,7 +562,7 @@ function gamepool(pool::Vector{T}) where {T}
 	if !all(==(elsz), length.(pool))
 		throw(ArgumentError("lengths of elements of pool are not consistent"))
 	end
-	sizes = zeros(Int, 3^elsz)
+	sizes = zeros(Int, 3 ^ elsz)
 	GamePool(pool, bestguess!(sizes, pool), sizes)
 end
 
@@ -562,7 +571,7 @@ wordlestrgp = gamepool(wordlestrings)
 
 # ╔═╡ 34dc9417-ee42-48e9-ad3b-bebaaf2adfa9
 md"""
-We can now define a fastgame generic and some methods
+We can now define a `fastgame` generic and some methods
 """
 
 # ╔═╡ b18ec6ab-6a40-4929-929d-e49cf215cc4b
@@ -1085,6 +1094,8 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╠═8f1d2147-2656-4ce2-b18a-cc3a9eccd769
 # ╟─1c83a79d-c79b-404d-90e2-2576eb32b4df
 # ╠═6cae0843-5f9e-4439-b5b4-9292c7818390
+# ╟─ef5b9b40-a036-49df-b3ff-54661af71cc6
+# ╠═d6beb106-4211-473c-b409-983779c250d7
 # ╟─37c672a3-3850-4d7b-bd13-922c13389d5e
 # ╠═94ba016a-0cd9-4284-9960-c0c98807f81f
 # ╟─fd09ce8f-552b-4a95-b935-88a2a5fec042
@@ -1116,7 +1127,7 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╟─7228fb42-f673-4246-99c0-fa0a347391cc
 # ╠═9aecbe62-7d6e-4311-82b8-4940e068b2a6
 # ╟─1db50e79-21e7-48a6-aab7-c52f1bb05288
-# ╟─9066998e-a9b2-49e1-97a0-f255f5423e3e
+# ╠═9066998e-a9b2-49e1-97a0-f255f5423e3e
 # ╠═1e6eabe2-7135-4179-af53-87fffd8e5c0a
 # ╟─ecd9d650-d071-41ad-a81c-c49e0b941dc9
 # ╠═53231a85-8658-49a4-9127-c1f01f53f9a6
