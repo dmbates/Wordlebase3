@@ -4,37 +4,46 @@
 using Markdown
 using InteractiveUtils
 
-# ╔═╡ 95c7ccf2-e6a7-4c9e-971e-0f8fd9e575c5
-using BenchmarkTools, DataFrames, PlutoUI, Random
+# ╔═╡ 152d2f2c-2f0b-4cc4-a42c-adb0200289ec
+using DataFrames, PlutoUI, Primes, Random
 
 # ╔═╡ fb19122c-8449-11ec-36bd-1f7d45b862cc
 md"""
 # Wordle and the Art of Julia Programming
 
-[Wordle](https://en.wikipedia.org/wiki/Wordle) is a recent but extremely popular word game.
+[Wordle](https://en.wikipedia.org/wiki/Wordle) is a recently developed, extremely popular word game that has already spawned many imitators such as [Primel](https://converged.yt/primel/).
 
 This posting presents some [Julia](https://julialang.org) functions motivated by Wordle problems.
 Part of the purpose is to illustrate the unique nature of Julia as a dynamically-typed language with a just-in-time (JIT) compiler.
 It allows you to write "generic", both in the common meaning of "general purpose" and in the technical meaning of generic functions, and performative code.
 
-This posting originated from a conversation on the Julia [discourse channel](https://discourse.julialang.org/t/rust-julia-comparison-post/75403) referring to a case where Julia code to perform a certain Wordle-related task was horribly slow - taking over 4 days to determine the "best" initial guess, according to a particular criterion.
+This posting originated from a conversation on the Julia [discourse channel](https://discourse.julialang.org/t/rust-julia-comparison-post/75403) referring to a case where Julia code to perform a certain Wordle-related task - determine the "best" initial guess in a Wordle game - was horribly slow.
+Julia code described in a [Hacker News](https://news.ycombinator.com/) posting took several hours to do this.
 
-In situations like this the Julia community inevitably responds by modifying the code to run much faster.
-Someone joked that we wouldn't be satisfied until we could do that task in less than 1 second.
+In situations like this the Julia community inevitably responds with suggested modifications to make the code run faster.
+Someone joked that we wouldn't be satisfied until we could do that task in less than 1 second, and we did.
 
-The code in this posting does so.
+The code in this posting can be used to solve a Wordle game very rapidly, as well as related games like Primel.
 
-> **ALERT** The code in this notebook has the potential to make playing Wordle quite boring. If you are enjoying playing Wordle you may want to stop reading now.
+> **WARNING** The code in this notebook has the potential to make playing Wordle quite boring. If you are enjoying playing Wordle you may want to stop reading now.
 
-## Wordle scores as base-3 numbers
+Before beginning we attach several packages that we will use in this notebook.
+"""
+
+# ╔═╡ e439fbf9-e4b7-4453-b446-86ca23b8e9f0
+md"""
+## Target pools
 
 If you are not familiar with the rules of Wordle, please check the [Wikipedia page](https://en.wikipedia.org/wiki/Wordle).
-It is a word game with the objective of guessing a 5-letter word.
-The target word is always from a list of 2315 such English words.
+It is a word game with the objective of guessing a 5-letter English word, which we will call the "target".
+The target word is changed every day but it is always chosen from a set of 2315 words, which we will call the "target pool".
+
+For this notebook we download the Wordle target pool from a github.com site.
+In practice it would usually be loaded from a file on a local file system.
 """
 
 # ╔═╡ f7b66c9f-edd5-4e5b-bda3-56246bdcd763
-words = split(
+wordlestrings = split(
 	read(
 		download(
 			"https://raw.githubusercontent.com/dmbates/Wordlebase3/main/tutorials/words.txt"
@@ -43,36 +52,113 @@ words = split(
 	)
 )
 
-# ╔═╡ 59fee6da-1898-4799-bfc9-4ea6f553c3fb
-length(words)
-
-# ╔═╡ 6b3de53d-a726-4bc5-9388-149626a10cf0
+# ╔═╡ 66ade745-5974-4163-934c-9c371e62fe65
 md"""
-We will use the example game for Wordle #196 shown on the Wikipedia page for illustration.
-First we will attach some Julia packages that we will use in this notebook.
+We call this pool `wordlestrings` because it is stored as a vector of `Strings` - well actually `SubString`s of one big `String`.
 """
 
-# ╔═╡ 005410cd-22fb-4b56-9916-9e0fe13a4c04
+# ╔═╡ 06debaa5-e91d-4276-9a5a-ce7670ccf894
+typeof(wordlestrings)
+
+# ╔═╡ 6da44056-4bc1-4fec-8a97-51dbb730142f
 md"""
-A Wordle game is summarized in a grid of squares where each row corresponds to a guess and the colors of the tiles are according to the rules:
+Later we will switch to a more efficient storage mode as a vector of `NTuple{5,Char}` or `NTuple{5,UInt8}` which allows us to take advantage of the fact that each substring is exactly 5 characters long.
 
-- green if the letter is in the target at the same position
-- yellow if the letter is in the target at a different position
-- gray if the letter is not in the target
+Speaking of which, it would be a good idea to check that this collection has the properties we were told it had.
+It should be a vector of 2315 strings, each of which is 5 characters.
+"""
 
-Wordle allows for saving the tile color pattern without the letters so that a player can post their results without posting the answer.
+# ╔═╡ 59fee6da-1898-4799-bfc9-4ea6f553c3fb
+length(wordlestrings)
+
+# ╔═╡ a2e912fa-ab82-4c07-8af4-82115118b170
+all(w -> length(w) == 5, wordlestrings)
+
+# ╔═╡ 031aeb1a-f3eb-4256-b7f3-5412b352d4b8
+md"""
+That last expression may look, well, "interesting".
+It is a way of checking that a function, in this case an anonymous function expressed using the "stabby lambda" syntax, returns `true` for each element of an iterator, in this case the vector `wordlestrings`.
+You can read the whole expression as "for each word `w` in `wordlestrings` check that `length(w)` is 5".
+
+These words are supposed to be exactly 5 letters long but it never hurts to check.
+I've been a data scientist for several decades and one of the first lessons in the field is to [trust, but verify](https://en.wikipedia.org/wiki/Trust%2C_but_verify) any claims about the data you are provided.
+
+While discussing this target pool we will form the alternative representations
+"""
+
+# ╔═╡ aabc8f2a-5d4b-4ba2-9350-a749dc842aa0
+wordlechartuples = NTuple{5,Char}.(wordlestrings)
+
+# ╔═╡ ec4426b3-18ab-49ca-8861-921c45f4f1e3
+typeof(wordlechartuples)
+
+# ╔═╡ 69dbe284-a18b-4cba-aaa5-9e65b2887518
+wordleuinttuples = NTuple{5,UInt8}.(wordlestrings)
+
+# ╔═╡ 6f39b935-9fa2-4eec-abd7-cb67d1eb4a4b
+md"""
+These expressions use the [dot syntax for vectorizing functions](https://docs.julialang.org/en/v1/manual/functions/#man-vectorized).
+That is the "`.`" between, say, `NTuple{5,Char}` and the left parenthesis, indicates that the operation of converting a `String` to a 5-tuple of `Char`s is to be applied to each element of the vector, returning a vector.
+
+These conversions could also be written as [comprehensions](https://docs.julialang.org/en/v1/manual/arrays/#man-comprehensions), which is another syntax for generating an array from an array.
+"""
+
+# ╔═╡ d6850a2c-9470-4c2f-aa04-8be1abada8ce
+[NTuple{5,Char}(w) for w in wordlestrings]
+
+# ╔═╡ d380eacc-e17f-4f99-b6d0-96581a299d78
+md"""
+While discussing these conversions we should also generate the target pool for Primel, which is all primes that can be represented as 5-digit base-10 numbers.
+"""
+
+# ╔═╡ 7f87168c-da09-41a0-b766-ae6e4d8a1f4f
+primelstrings = [lpad(p, 5, '0') for p in primes(99999)]
+
+# ╔═╡ 214185a7-1ee2-438a-a33b-8710aa4a9e2a
+length(primelstrings)
+
+# ╔═╡ ac96f336-6301-4188-af28-7f34119622c4
+last(primelstrings, 10)
+
+# ╔═╡ 844cc5f3-1ff1-4a08-875e-5a6fac5b27a9
+primelchartuples = NTuple{5,Char}.(primelstrings)
+
+# ╔═╡ 7f59cb6c-e0c2-46bd-8d21-d27237705f82
+primeluinttuples = [NTuple{5,UInt8}([c - '0' for c in p]) for p in primelstrings]
+
+# ╔═╡ 4b27131d-f656-4469-8aaf-2d289aac292f
+md"""
+## Game play
+
+A Wordle game is a dialog between the player and an "oracle", which, for the official game, is the web site.
+The player submits a question to the oracle and the oracle responds, using information to which the player does not have access.
+In this case the information is the target word.
+The question is the player's guess - a 5-letter word - and the response is a score for that word.
+The score indicates, for each character, whether it matches the character in the same position in the target or it is in the target in another position or it is not in the target at all.
+
+Using the sample game for Wordle #196 from the Wikipedia page for illustration
 """
 
 # ╔═╡ 54c849c4-0699-4682-a716-86c7a2da5aea
 PlutoUI.Resource("https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Wordle_196_example.svg/440px-Wordle_196_example.svg.png")
 
-# ╔═╡ 2dfac026-f4bd-47b0-96c0-8babd046758b
+# ╔═╡ 6b3de53d-a726-4bc5-9388-149626a10cf0
 md"""
-Of course, the colors are just one way of summarizing the result of a guess.
-Within a computer program it is easier to use an integer to represent each of the 243 = 3⁵ possible scores.
-An obvious way of mapping the result to an integer is to evaluate the score as it were a 5-digit, base-3 number.
+The target is "rebus".
 
-We'll skip the representation of scores as colored tiles and go directly to representing the score as an integer between 0 and 242, using the function
+The player's first guess is "arise" and the response, or score, from the oracle is coded as 🟫, 🟨, 🟫, 🟨, 🟨 where 🟫 indicates that the letter is not in the target (neither `a` nor `i` occur in "rebus") and 🟨 indicates that the letter is in the target but not at that position.
+(I'm using 🟫 instead of a gray square because I can't find a gray square Unicode character.)
+
+The second guess is "route" for which the response is 🟩, 🟫, 🟨, 🟫, 🟨 indicating that the first letter in the guess occurs as the first letter in the target.
+
+Of course, the colors are just one way of summarizing the response to a guess.
+Within a computer program it is easier to use an integer to represent each of the 243 = 3⁵ possible scores.
+An obvious way of mapping the result to an integer in the (decimal) range 0:242 by mapping the response for each character to 2 (in target at that position), 1 (in target not at that position), or 0 (not in target) and regarding the pattern as a base-3 number.
+
+In this coding the response for the first guess, "arise", is 01011 in base-3 or 31 in decimal.
+The response for the second guess, "route", is 20101 in base-3 or 172 in decimal.
+
+A function to evaluate this score can be written as
 """
 
 # ╔═╡ aa5a3223-9616-4148-b3ab-fabf68327dfa
@@ -92,45 +178,78 @@ These numeric scores are not on a scale where "smaller is better" or "larger is 
 
 The score is just a way of representing each of the 243 patterns that can be produced.
 
-We would call such a function as, e.g.
+We can convert back to colored squares if desired.
 """
+
+# ╔═╡ 8f1d2147-2656-4ce2-b18a-cc3a9eccd769
+function tiles(sc)
+	result = Char[]
+	for _ in 1:5
+		sc, r = divrem(sc, 3)
+		push!(result, iszero(r) ? '🟫' : (isone(r) ? '🟨' : '🟩'))
+	end
+	return String(reverse(result))
+end
+
+# ╔═╡ 1c83a79d-c79b-404d-90e2-2576eb32b4df
+md"For example,"
 
 # ╔═╡ 6cae0843-5f9e-4439-b5b4-9292c7818390
-score("arise", "rebus")
+tiles.(score.(("arise", "route", "rules", "rebus"), Ref("rebus")))
 
-# ╔═╡ 7e558835-7767-477d-a063-066a7d2f2791
+# ╔═╡ 37c672a3-3850-4d7b-bd13-922c13389d5e
 md"""
-That is, the pattern gray, yellow, gray, yellow, yellow corresponds to the base-3 integer `01011`, which is 31 in decimal.
+## An oracle function
 
-Similarly
+To play a game of Wordle we create an oracle function by fixing the second argument to `score`.
+Producing a function by fixing one of the arguments to another function is sometimes called [currying](https://en.wikipedia.org/wiki/Currying) and there is a Julia type, `Base.Fix2`, which fixes second argument of a function like `score`.
 """
 
-# ╔═╡ 54d789cb-d5d8-4366-a907-8a38ee66e307
-score("route", "rebus")
+# ╔═╡ 94ba016a-0cd9-4284-9960-c0c98807f81f
+oracle196 = Base.Fix2(score, "rebus")
 
-# ╔═╡ 32559155-0b36-4f5e-9793-c03f707cfa1e
+# ╔═╡ fd09ce8f-552b-4a95-b935-88a2a5fec042
 md"""
-because the pattern green, gray, yellow, gray, yellow is `20101` in base-3 or 172 in decimal.
+We can treat `oracle196` as a function of one argument.
+For example,
+"""
 
+# ╔═╡ 7f5035be-0414-426e-b8b2-2f4d4f4c6231
+tiles.(oracle196.(("arise", "route", "rules", "rebus")))
+
+# ╔═╡ e6808c28-74d0-4734-a8ce-fd8783994d10
+md"""
+but we can also examine the arguments from which it was constructed if, for example, we want to check what the target is.
+"""
+
+# ╔═╡ 1555970d-671f-4af5-9e9d-893850e64728
+propertynames(oracle196)
+
+# ╔═╡ d22f52ef-8c67-4783-a4f1-c4bd88380b44
+oracle196.x
+
+
+# ╔═╡ cc9ad93c-7b3e-4ca6-b108-a532b4620ce3
+md"""
 ## Using a guess and score to filter the set of possible solutions
 
 Now we can present a simple Wordle strategy.
 
-1. At each turn we have a set of possible targets.
-2. We choose a guess, submit that to the "oracle", which knows the target and returns a score.
-3. If the score corresponds to a perfect match, 242 in our scheme or 5 green tiles in the tile scheme, then the guess is the target and we are done.
-4. Use the guess and the score to reduce the set of possible targets to those that would have given this score.
+1. Start with the original target pool for the game.
+2. Choose a guess from the target pool, submit it to the oracle and obtain the score.
+3. If the score corresponds to a perfect match, 242 as a raw score or 5 green tiles after conversion, then the guess is the target and we are done.
+4. Use the guess and the score to reduce target pool to those targets that would have given this score.
 5. Go to 2.
 
-Consider step 4 - use a guess and a score to refine the set of possible targets.
-We could do this with pencil and paper by starting with that list of 2315 words and crossing off those that don't give the particular score from a particular guess.
+Consider step 4 - use a guess and a score to reduce the target pool.
+We could do this with pencil and paper by starting with the list of 2315 words and crossing off those that don't give the particular score from a particular guess.
 
 But that would be tedious, and computers are really good at that kind of thing, so we write a function.
 """
 
 # ╔═╡ 949c440c-dda0-49d9-abaa-7c3835eedc41
-function refine(words, guess, sc)
-	return filter(w -> score(guess, w) == sc, words)
+function refine(pool, guess, sc)
+	return filter(target -> score(guess, target) == sc, pool)
 end
 
 # ╔═╡ e1e5b0d9-518b-442d-b5fd-3dc99a8f8e1f
@@ -138,11 +257,46 @@ md"""
 In our sample game the first guess is "arise" and the score is 31.
 """
 
-# ╔═╡ b0ec2259-4a26-42af-a2de-4f3d8d6f7240
-words1 = refine(words, "arise", 31)
+# ╔═╡ 06be4b61-d0a8-469f-ad41-a220d69cb383
+md"""
+Here we needed to know that the oracle returned the score 31 from the guess "arise".
+We could instead write the function with the oracle as an argument and evaluate the score on which to filter within the `refine` function.
 
-# ╔═╡ c3e8cdc8-7602-4771-81c6-a47a36b82d0c
-length(words1)
+In Julia we can define several methods for any function name as long as we can distinguish the "signature" of the argument.
+This is why every time we define a new function, the response says it is a `(generic function with 1 method)`.
+
+We define another `refine` method which takes a `Function` as the third argument
+"""
+
+# ╔═╡ a4e60664-0f16-4f9a-9ddd-7430abf8989d
+refine(pool, guess, oracle::Function) = refine(pool, guess, oracle(guess))
+
+# ╔═╡ b0ec2259-4a26-42af-a2de-4f3d8d6f7240
+pool1 = refine(wordlestrings, "arise", 31)
+
+# ╔═╡ 83acc99e-7a1b-47ed-b4c2-20eacb76c6b0
+length(pool1)
+
+# ╔═╡ 3ea7b446-6ac6-4eea-9618-a6634b93578f
+md"""
+This definition uses the short-cut, "one-liner", form of Julia function definition.
+
+Here we define one method as an application of another method with the arguments rearranged a bit.
+This is a common idiom in Julia.
+
+We can check that there are indeed two method definitions.
+"""
+
+# ╔═╡ 3f88f1f3-ef1a-449c-94fd-ce76fa597388
+methods(refine)
+
+# ╔═╡ 39466603-a386-46aa-a8ed-11b0f060d4f6
+md"""
+(the messy descriptions of where the methods were defined is because we're doing this in a notebook) and that the second method works as intended
+"""
+
+# ╔═╡ 4cfb8675-d4df-4e8d-92ff-b4e7ae642b1a
+refine(wordlestrings, "arise", oracle196)
 
 # ╔═╡ 6da38500-a5bd-4d7c-b4fc-18ab670447bf
 md"""
@@ -151,20 +305,21 @@ In the sample game, the second guess was "route".
 Interestingly this word is not in the set of possible targets.
 """
 
-# ╔═╡ 960b8710-d52e-4385-a550-a1d1b21efd69
-"route" ∈ words1
+# ╔═╡ e28c14a4-86e1-4351-bc2e-1dd55d6da4cc
+"route" ∈ pool1
 
 # ╔═╡ 3e5e1fb8-22c0-4b18-bb75-e139bb2df66f
 md"""
 Choosing a word, or even a non-word, that can't be a target is allowed, and there is some potential for it being useful as a way of screening the possible targets.
 But generally it is not a great strategy to waste a guess that can't be the target, especially when only six guesses are allowed.
-In our strategy described below we always choose the next guess from the current set of possible targets.
+In our strategy described below we always choose our guesses from the pool.
+This is known as [hard mode](https://www.techradar.com/news/wordle-hard-mode) in Wordle, although, from the programmer's point of view it's more like "easy mode".
 
 Anyway, continuing with the sample game
 """
 
 # ╔═╡ 32f04657-1b42-436f-9f23-d84a8f68fa09
-words2 = refine(words1, "route", 172)
+pool2 = refine(pool1, "route", oracle196)
 
 # ╔═╡ db179dbe-bbd1-47fd-ac6e-2f90e27992f4
 md"""
@@ -172,22 +327,25 @@ So we're done - the target word must be "rebus" and the third guess, "rules", in
 
 ## Choosing a good guess
 
-Assuming that we will choose our next guess from the current set of possible targets, how should we go about it?
-We want a guess that will reduce the size of the set of possible targets as much as possible, but we don't know what that reduction will be until we have submitted the guess to the oracle.
+Assuming that we will choose our next guess from the current target pool, how should we go about it?
+We want a guess that will reduce the size of the target pool as much as possible, but we don't know what that reduction will be until we have submitted the guess to the oracle.
 
 However, we can set this up as a probability problem.
 If the target has been randomly chosen from the set of possible targets, which apparently they are, and our pool size is currently `n`, then each word in the pool has probability `1/n` of being the target.
 Thus we can evaluate the expected size of the set of possible targets after the next turn for each potential guess, and choose the guess that gives the smallest expected size.
 
-It turns out that all we need to know for each potential guess is the number of words in the pool that would give each of the possible scores.
-In mathematical terms, we partition the words from the current pool into at most 243 [equivalence classes](https://en.wikipedia.org/wiki/Equivalence_class) according to the score from the guess.
+It sounds as if it is going to be difficult to evaluate the expected pool size because we need to loop over every word in the pool as a guess and, for that guess, every word in the pool as a target, evaluate the score and do something with that score.
+But it turns out that all we need to know for each potential guess is the number of words in the pool that would give each of the possible scores.
+We need a loop within a loop but all the inner loop has to do is evaluate a score and increment some counts.
+
+In mathematical terms, each guess partitions the targets in the current pool into at most 243 [equivalence classes](https://en.wikipedia.org/wiki/Equivalence_class) according to the score from the guess on that target.
 
 The key point here is that the number of words in a given class is both the size of the pool that would result from one of these targets and the number of targets that could give this pool.
 
 Let's start by evaluating the counts of the words in the pool that give each possible score from a given guess.
 We will start with a vector of 243 zeros and, for every word in the pool, evaluate the score and increment the count for that score.
 
-We will take a quick detour to discuss a couple of technical points about Julia programming.
+We should make a quick detour to discuss a couple of technical points about Julia programming.
 In Julia, by default, the indices into an array start at 1, so the position we will increment in the array of sizes is at `score(guess, w) + 1`.
 Secondly, instead of allocating an array for the result within the function we will pass the container - a vector of integers of length 243 - as an argument and modify its contents within the function.
 
@@ -223,14 +381,14 @@ For the first guess, "arise", on the original set `words`, this gives
 """
 
 # ╔═╡ 7cc14ee8-114c-432e-865d-1aa9b757b5f3
-binsizes!(sizes, words, "arise")
+binsizes!(sizes, wordlestrings, "arise")
 
 # ╔═╡ 7228fb42-f673-4246-99c0-fa0a347391cc
 md"""
 Recall that each of these sizes is both the size the pool and the number of targets that would return this pool.
 That is, there are 168 targets that would return a score of 0 from this guess and the size of the pool after refining by this guess and a score of 0 would be 168.
 
-Thus, the expected pool size after a first guess of "arise" is the sum of the squared sizes divided by the sum of the sizes.
+Thus, the expected pool size after a first guess of "arise" is the sum of the squared bin sizes divided by the sum of the sizes, which is the current pool size.
 
 For the example of the first guess `"arise"` and the original pool, `words`, the expected pool size after refining by the score for this guess is
 """
@@ -255,10 +413,7 @@ This will be used in an anonymous function passed to `argmin`.
 
 # ╔═╡ 1e6eabe2-7135-4179-af53-87fffd8e5c0a
 function expectedsize!(sizes, words, guess)
-	fill!(sizes, 0)    # zero out the counts
-	for w in words
-		sizes[score(guess, w) + 1] += 1
-	end
+	binsizes!(sizes, words, guess)
 	return sum(abs2, sizes) / length(words)
 end
 
@@ -268,7 +423,7 @@ The word chosen for the first guess in the sample game, "arise", is a good choic
 """
 
 # ╔═╡ 53231a85-8658-49a4-9127-c1f01f53f9a6
-expectedsize!(sizes, words, "arise")
+expectedsize!(sizes, wordlestrings, "arise")
 
 # ╔═╡ d18613ad-b460-4c65-8b21-e09f67a44947
 md"but not the best choice."
@@ -279,75 +434,168 @@ function bestguess!(sizes, words)
 end
 
 # ╔═╡ b7385840-49f1-4022-9ac2-87991f93043a
-bestguess!(sizes, words)
+bestguess!(sizes, wordlestrings)
 
 # ╔═╡ e256e5c9-2225-4bb8-8022-58a05aca7224
-expectedsize!(sizes, words, "raise")
+expectedsize!(sizes, wordlestrings, "raise")
 
 # ╔═╡ 1d0742f9-37ab-4b79-b116-cf567ffbb1ed
 md"""
-That is, the optimal first guess, if we restrict ourselves to the set of possible targets, is "raise".
+That is, the optimal first guess in Wordle "hard mode" is "raise".
 (A slight variation of this task of choosing the best initial choice was the example in the discourse thread mentioned above.)
 
 To continue playing.
 """
 
-# ╔═╡ e2805c6e-87b4-443f-a0d0-0eac86d7c708
-wrds1 = refine(words, "raise", score("raise", "rebus"))
-
-# ╔═╡ 6d6228cb-65cf-4716-905f-c673d667e05a
-g2 = bestguess!(sizes, wrds1)
+# ╔═╡ 2982eabe-c75e-4bd8-80f0-b63c8b769e79
+guess2 = bestguess!(sizes, refine(wordlestrings, "raise", oracle196))
 
 # ╔═╡ 4e41761e-5e4b-42a2-a6a3-a73549d798e4
-score(g2, "rebus")
+oracle196("rebus")
 
 # ╔═╡ bf81ba39-23e4-461c-b0b6-cca578f3ab92
 md"""
 And we are done after 2 guesses.
 
-To write a function that plays a game of Wordle, we pass an "oracle" function, which returns the score for a given guess.
-For testing purposes, the oracle is just a call to `score` with a fixed `target` argument.
-Producing a function by fixing one of the arguments to another function is sometimes called [currying](https://en.wikipedia.org/wiki/Currying) and there is a `Fix2` function in Julia to return a function that fixes the second argument of a function like `score`.
-
-If we pick a target at random from `words`, then we can use
-"""
-
-# ╔═╡ d7ee1d81-cb92-4ef4-a9ed-11429312319b
-oracle = Base.Fix2(score, rand(words))
-
-# ╔═╡ 5b1f5914-3d54-4ed5-8b04-491aa2392038
-md"""
-And we don't actually know what the target is, unless we somehow take apart the `oracle` function, which is beyond my abilities.
-
-Now we can create a function that plays a game of Wordle using this oracle and returns a DataFrame giving the guesses, the score for each guess and the pool size to which that guess is applied.
-Other than the code to preserve the history, the code is like the pseudo-code above.
+To write a function that plays a game of Wordle, we pass an oracle function and the initial target pool.
 """
 
 # ╔═╡ 0b715643-a280-4287-9f62-68e520b35e2d
-function playWordle(oracle::Function, words)
-	history = typeof((; guess=first(words), score=0, poolsz=0))[]
-	sizes = zeros(Int, 243)
+function playgame(oracle::Function, pool)
+	guesses, scores, poolsz = similar(pool, 0), String[], Int[] # to record play
+	nbins = 3^length(first(pool))
+	sizes = zeros(Int, nbins)
 	while true
-		guess = bestguess!(sizes, words)  # always returns "raise" for first guess
-		sc = oracle(guess)
-		push!(history, (; guess=guess, score=sc, poolsz=length(words)))
-		sc == 242 && break
-		words = refine(words, guess, sc)
+		guess = bestguess!(sizes, pool)
+		push!(guesses, guess)
+		score = oracle(guess)
+		push!(scores, tiles(score))
+		push!(poolsz, length(pool))
+		score == nbins - 1 && break
+		pool = refine(pool, guess, score)
 	end
-	return DataFrame(history)
+	return DataFrame(guess = guesses, score = scores, pool_size = poolsz)
+end
+
+# ╔═╡ 32269cbe-91ce-4f10-bdde-7244b0709dfc
+md"""
+If we define another `playgame` method that takes a random number generator and a target pool, we can play a game with the target chosen at random.
+"""
+
+# ╔═╡ 532ddbc4-f1d9-4de1-9eec-33851e7cc609
+function playgame(rng::AbstractRNG, pool)
+	return playgame(Base.Fix2(score, rand(rng, pool)), pool)
 end
 
 # ╔═╡ a04a07c4-86b9-47db-95bf-06f4492d960b
-results = playWordle(oracle, words)
+results = playgame(oracle196, wordlestrings)
+
+# ╔═╡ 73a8cc54-fdd8-47b3-b22d-5262b06c47d3
+md"""
+First, initialize a random number generator (RNG) for reproducibility with this notebook.
+
+As of Julia v1.7.0 the default RNG is `Xoshiro`
+"""
+
+# ╔═╡ e93d993d-490f-4a94-a339-5c77add7bbac
+rng = Xoshiro(42);
 
 # ╔═╡ 2926c2b6-e5df-4e1a-a03a-5a1c3b738f6f
-oracle(last(results.guess))
+playgame(rng, wordlestrings)
 
-# ╔═╡ cf50cf34-3f1a-4782-986b-3d1685ee2ad8
-md"Alternatively we can generate the oracle in the actual argument to the `playWordle` function"
+# ╔═╡ 6ca2328e-09c9-4da3-bfa8-890fc44e3a28
+md"""
+None of the functions we have defined are restricted to the Wordle list or the representation of these words as `String`.
+"""
 
-# ╔═╡ bcc674e4-7897-41c6-9016-fd9383305e6b
-playWordle(Base.Fix2(score, rand(words)), words)
+# ╔═╡ d16870fa-b830-4824-8fdb-6f7e2df82770
+playgame(rng, wordlechartuples)
+
+# ╔═╡ 8131a8a9-32ff-4595-ae70-5c684482fd0e
+playgame(rng, primelchartuples)
+
+# ╔═╡ a6faf6e5-c545-42a1-b728-9d5b070917b0
+md"""
+We can even use `playgame` to play all possible Wordle games and check properties of our strategy for choosing the next guess.
+For example, are we guaranteed to complete the game in six or fewer guesses?
+What is the average number of guesses to complete the game?
+
+And we may want to consider alternative storage schemes for the original pool.
+How do they influence run-time of the game?
+
+But before doing this we should address a glaring inefficiency in the existing `playgame` methods: the initial guess only depends on the `pool` argument and we keep evaluating the same answer at the beginning of every game.
+Of all the calls to `bestguess` in the game this is the most expensive call because the pool is largest at the beginning of play.
+
+## Combining the pool and the initial guess
+
+To ensure that the initial guess is consistent with the pool we should store them as parts of a single structure.
+And while we are at it, we can also create and store the vector to accumulate the bin sizes and do a bit of error checking.
+
+We declare the type
+"""
+
+# ╔═╡ 4ab20246-e7d1-4662-ac8f-3a86fa2c1330
+struct GamePool{T}    # T will be the element type
+	pool::Vector{T}
+	initial::T
+	sizes::Vector{Int}
+end
+
+# ╔═╡ e5973e7b-9e1f-4706-b8b4-911b7b162c17
+md"""
+and an external constructor for the type.
+Generally the external constructor would have the same name as the type but that is not allowed in Pluto notebooks so we use a lower-case name.
+"""
+
+# ╔═╡ c62e39c8-a37d-4cc9-892a-cec0113435c4
+function gamepool(pool::Vector{T}) where {T}
+	elsz = length(first(pool))
+	if !all(==(elsz), length.(pool))
+		throw(ArgumentError("lengths of elements of pool are not consistent"))
+	end
+	sizes = zeros(Int, 3^elsz)
+	GamePool(pool, bestguess!(sizes, pool), sizes)
+end
+
+# ╔═╡ 2dd64f53-6bed-47f7-bd46-7876e5c8e662
+wordlestrgp = gamepool(wordlestrings)
+
+# ╔═╡ 34dc9417-ee42-48e9-ad3b-bebaaf2adfa9
+md"""
+We can now define a fastgame generic and some methods
+"""
+
+# ╔═╡ b18ec6ab-6a40-4929-929d-e49cf215cc4b
+function fastgame(oracle::Function, gp::GamePool)
+	(; pool, initial, sizes) = gp   # de-structure gp
+	sc = oracle(initial)
+	guesses, scores, poolsz = [initial], [tiles(sc)], [length(pool)] # to record play
+	nscores = length(sizes)
+	if sc + 1 ≠ nscores   	# didn't get a lucky first guess
+		pool = refine(pool, initial, sc)
+		while true
+			guess = bestguess!(sizes, pool)
+			push!(guesses, guess)
+			sc = oracle(guess)
+			push!(scores, tiles(sc))
+			push!(poolsz, length(pool))
+			sc + 1 == nscores && break
+			pool = refine(pool, guess, sc)
+		end
+	end
+	return DataFrame(guess = guesses, score = scores, pool_size = poolsz)
+end
+
+# ╔═╡ ebf075ff-234c-41dc-95f1-bfe742e1bc57
+function fastgame(rng::AbstractRNG, gp::GamePool)
+	fastgame(Base.Fix2(score, rand(rng, gp.pool)), gp)
+end
+
+# ╔═╡ 2681e794-716b-4d38-81ab-273adfcdb5c7
+fastgame(gp::GamePool) = fastgame(Random.GLOBAL_RNG, gp)
+
+# ╔═╡ 5fae51c2-d1b9-4f0f-b109-8f57d084e581
+fastgame(wordlestrgp)
 
 # ╔═╡ c102812d-dabf-4bb6-9f4b-5f7d7372f2b5
 md"""
@@ -400,7 +648,7 @@ collect(zip("arise", "rebus"))
 md"""
 One of the great advantages of dynamically-typed languages with a REPL (read-eval-print-loop) like Julia is that we can easily check what `zip` produces in a couple of examples (or even read the documentation returned by `?zip`, if we are desperate).
 
-The rest of the function is a common pattern - initialize `s`, which will be the result, modify `value` in a loop, and return it.
+The rest of the function is a common pattern - initialize `s`, which will be the result, modify `s` in a loop, and return it.
 The Julia expression
 ```jl
 s *= 3
@@ -441,12 +689,6 @@ Without going in to details we note that we can take advantage of the fact that 
 Using the `@benchmark` macro from the `BenchmarkTools` package gives run times of a few tens of nanoseconds for these arguments, and shows that the function applied to the fixed-length collections is faster.
 """
 
-# ╔═╡ 6206bdbf-67e2-4469-98dc-3e62b75de93d
-@benchmark score(g, t)  setup = (g = "arise"; t = "rebus")
-
-# ╔═╡ a4e3bf91-00e8-4b5e-8b0c-04e39b825740
-@benchmark score(g, t) setup=(g=NTuple{5,Char}("arise"); t=NTuple{5,Char}("rebus"))
-
 # ╔═╡ 9bb81a4a-7c85-4cba-804a-d9e8a3d06141
 md"""
 That is, the version using the fixed-length structure is nearly 4 times as fast as that using the variable-length `String` structure.
@@ -458,9 +700,6 @@ In fact the whole collection of functions can work with `NTuple` representations
 First convert `words` to a vector of tuples
 """
 
-# ╔═╡ 57b5fc12-eb47-4d9c-b68d-4601d14175d1
-tuples = NTuple{5,Char}.(words)
-
 # ╔═╡ 47de77ad-8218-4d5a-8e92-5ea654d598ff
 md"""
 (Note that for conversion of a single length-5 string the call was `NTuple{5,Char}("rebus")` but for conversion of a vector of length-5 strings the call includes a dot before the opening parenthesis.
@@ -469,23 +708,11 @@ This is an example of "dot-broadcasting", which is a very powerful way in Julia 
 Then we can just pass the result to `playWordle`.
 """
 
-# ╔═╡ fa2e705e-83d5-4c0d-97ce-e409f44dcdc9
-playWordle(Base.Fix2(score, rand(tuples)), tuples)
-
 # ╔═╡ 128fdb37-79a4-4e6e-8c0b-e78e307d9830
 md"""
 We can benchmark both versions to see if the speed advantage for tuples carries over to the higher-level calculation.
 However we want to make sure that it is an apples-to-apples comparison so we first select the index of the target then create the oracle from that element of the `words` or the `tuples` vector.
 """
-
-# ╔═╡ e3c3bd0a-ba1c-4550-87e9-cf0180781596
-oracleind = rand(axes(words, 1))  # random index in 1:length(words)
-
-# ╔═╡ 55ec8015-8a0a-49bb-b77e-d330db58c369
-@benchmark playWordle(o, t) setup=(o=Base.Fix2(score, tuples[oracleind]); t=tuples)
-
-# ╔═╡ bffa2de7-5a63-4022-a671-fa3b62b63661
-@benchmark playWordle(o, t) setup=(o=Base.Fix2(score, words[oracleind]); t=words)
 
 # ╔═╡ c6c40aff-10a2-419f-97fb-f4c25da081ad
 md"""
@@ -497,57 +724,18 @@ We should allow this fixed first guess to be passed as an argument.
 While we are revising the function we can clean up a few other places where assumptions on the length of the words is embedded and do some checking of arguments.
 """
 
-# ╔═╡ b18ec6ab-6a40-4929-929d-e49cf215cc4b
-function fastWordle(oracle::Function, words, firstguess)
-	if firstguess ∉ words
-		throw(ArgumentError("firstguess = $firstguess is not in words"))
-	end
-	sc = oracle(firstguess)
-	history = [(; guess=firstguess, score=sc, poolsz=length(words))]
-	nscores = 3 ^ length(firstguess)
-	sizes = zeros(Int, nscores)
-	words = refine(words, firstguess, sc)
-	while true
-		guess = bestguess!(sizes, words)
-		sc = oracle(guess)
-		push!(history, (; guess=guess, score=sc, poolsz=length(words)))
-		sc + 1 == nscores && break
-		words = refine(words, guess, sc)
-	end
-	return DataFrame(history)
-end
-
-# ╔═╡ 8c6c3cd8-4fcb-4330-8990-3142219d2493
-fastWordle(Base.Fix2(score, words[oracleind]), words, "raise")
-
-# ╔═╡ 870d2895-dfb4-47aa-933c-b359e5237e0e
-md"""
-Apparently `fastWordle` works.
-
-Is it faster?
-"""
-
-# ╔═╡ c080b635-e58f-4f7b-9b9e-b83719c28f84
-@benchmark fastWordle(o, t, f) setup=(o=Base.Fix2(score, words[oracleind]); t=words; f="raise")
-
-# ╔═╡ af959dbe-4fe7-4484-bf62-05813a8dd73e
-md"Yes, it is much faster, as is the same function applied to tuples."
-
-# ╔═╡ a939119b-6ac4-4322-86bd-22bb6562d268
-@benchmark fastWordle(o, t, f) setup=(o=Base.Fix2(score, tuples[oracleind]); t=tuples; f=NTuple{5,Char}("raise"))
-
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
-BenchmarkTools = "~1.2.2"
 DataFrames = "~1.3.2"
-PlutoUI = "~0.7.33"
+PlutoUI = "~0.7.34"
+Primes = "~0.5.1"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -571,12 +759,6 @@ uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
-
-[[deps.BenchmarkTools]]
-deps = ["JSON", "Logging", "Printf", "Profile", "Statistics", "UUIDs"]
-git-tree-sha1 = "940001114a0147b6e4d10624276d56d531dd9b49"
-uuid = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
-version = "1.2.2"
 
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
@@ -760,9 +942,9 @@ uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 
 [[deps.PlutoUI]]
 deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "UUIDs"]
-git-tree-sha1 = "da2314d0b0cb518906ea32a497bb4605451811a4"
+git-tree-sha1 = "8979e9802b4ac3d58c503a20f2824ad67f9074dd"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-version = "0.7.33"
+version = "0.7.34"
 
 [[deps.PooledArrays]]
 deps = ["DataAPI", "Future"]
@@ -776,13 +958,14 @@ git-tree-sha1 = "dfb54c4e414caa595a1f2ed759b160f5a3ddcba5"
 uuid = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
 version = "1.3.1"
 
+[[deps.Primes]]
+git-tree-sha1 = "984a3ee07d47d401e0b823b7d30546792439070a"
+uuid = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
+version = "0.5.1"
+
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-
-[[deps.Profile]]
-deps = ["Printf"]
-uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 
 [[deps.REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
@@ -874,25 +1057,54 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 
 # ╔═╡ Cell order:
 # ╟─fb19122c-8449-11ec-36bd-1f7d45b862cc
-# ╠═f7b66c9f-edd5-4e5b-bda3-56246bdcd763
+# ╠═152d2f2c-2f0b-4cc4-a42c-adb0200289ec
+# ╟─e439fbf9-e4b7-4453-b446-86ca23b8e9f0
+# ╟─f7b66c9f-edd5-4e5b-bda3-56246bdcd763
+# ╟─66ade745-5974-4163-934c-9c371e62fe65
+# ╠═06debaa5-e91d-4276-9a5a-ce7670ccf894
+# ╟─6da44056-4bc1-4fec-8a97-51dbb730142f
 # ╠═59fee6da-1898-4799-bfc9-4ea6f553c3fb
-# ╟─6b3de53d-a726-4bc5-9388-149626a10cf0
-# ╠═95c7ccf2-e6a7-4c9e-971e-0f8fd9e575c5
-# ╟─005410cd-22fb-4b56-9916-9e0fe13a4c04
+# ╠═a2e912fa-ab82-4c07-8af4-82115118b170
+# ╟─031aeb1a-f3eb-4256-b7f3-5412b352d4b8
+# ╠═aabc8f2a-5d4b-4ba2-9350-a749dc842aa0
+# ╠═ec4426b3-18ab-49ca-8861-921c45f4f1e3
+# ╠═69dbe284-a18b-4cba-aaa5-9e65b2887518
+# ╟─6f39b935-9fa2-4eec-abd7-cb67d1eb4a4b
+# ╠═d6850a2c-9470-4c2f-aa04-8be1abada8ce
+# ╟─d380eacc-e17f-4f99-b6d0-96581a299d78
+# ╠═7f87168c-da09-41a0-b766-ae6e4d8a1f4f
+# ╠═214185a7-1ee2-438a-a33b-8710aa4a9e2a
+# ╠═ac96f336-6301-4188-af28-7f34119622c4
+# ╠═844cc5f3-1ff1-4a08-875e-5a6fac5b27a9
+# ╠═7f59cb6c-e0c2-46bd-8d21-d27237705f82
+# ╟─4b27131d-f656-4469-8aaf-2d289aac292f
 # ╟─54c849c4-0699-4682-a716-86c7a2da5aea
-# ╟─2dfac026-f4bd-47b0-96c0-8babd046758b
+# ╟─6b3de53d-a726-4bc5-9388-149626a10cf0
 # ╠═aa5a3223-9616-4148-b3ab-fabf68327dfa
 # ╟─3d0909bb-28d9-431b-ae99-ccf7ca717e97
+# ╠═8f1d2147-2656-4ce2-b18a-cc3a9eccd769
+# ╟─1c83a79d-c79b-404d-90e2-2576eb32b4df
 # ╠═6cae0843-5f9e-4439-b5b4-9292c7818390
-# ╟─7e558835-7767-477d-a063-066a7d2f2791
-# ╠═54d789cb-d5d8-4366-a907-8a38ee66e307
-# ╟─32559155-0b36-4f5e-9793-c03f707cfa1e
+# ╟─37c672a3-3850-4d7b-bd13-922c13389d5e
+# ╠═94ba016a-0cd9-4284-9960-c0c98807f81f
+# ╟─fd09ce8f-552b-4a95-b935-88a2a5fec042
+# ╠═7f5035be-0414-426e-b8b2-2f4d4f4c6231
+# ╟─e6808c28-74d0-4734-a8ce-fd8783994d10
+# ╠═1555970d-671f-4af5-9e9d-893850e64728
+# ╠═d22f52ef-8c67-4783-a4f1-c4bd88380b44
+# ╟─cc9ad93c-7b3e-4ca6-b108-a532b4620ce3
 # ╠═949c440c-dda0-49d9-abaa-7c3835eedc41
 # ╟─e1e5b0d9-518b-442d-b5fd-3dc99a8f8e1f
 # ╠═b0ec2259-4a26-42af-a2de-4f3d8d6f7240
-# ╠═c3e8cdc8-7602-4771-81c6-a47a36b82d0c
+# ╠═83acc99e-7a1b-47ed-b4c2-20eacb76c6b0
+# ╟─06be4b61-d0a8-469f-ad41-a220d69cb383
+# ╠═a4e60664-0f16-4f9a-9ddd-7430abf8989d
+# ╟─3ea7b446-6ac6-4eea-9618-a6634b93578f
+# ╠═3f88f1f3-ef1a-449c-94fd-ce76fa597388
+# ╟─39466603-a386-46aa-a8ed-11b0f060d4f6
+# ╠═4cfb8675-d4df-4e8d-92ff-b4e7ae642b1a
 # ╟─6da38500-a5bd-4d7c-b4fc-18ab670447bf
-# ╠═960b8710-d52e-4385-a550-a1d1b21efd69
+# ╠═e28c14a4-86e1-4351-bc2e-1dd55d6da4cc
 # ╟─3e5e1fb8-22c0-4b18-bb75-e139bb2df66f
 # ╠═32f04657-1b42-436f-9f23-d84a8f68fa09
 # ╟─db179dbe-bbd1-47fd-ac6e-2f90e27992f4
@@ -913,37 +1125,36 @@ uuid = "3f19e933-33d8-53b3-aaab-bd5110c3b7a0"
 # ╠═b7385840-49f1-4022-9ac2-87991f93043a
 # ╠═e256e5c9-2225-4bb8-8022-58a05aca7224
 # ╟─1d0742f9-37ab-4b79-b116-cf567ffbb1ed
-# ╠═e2805c6e-87b4-443f-a0d0-0eac86d7c708
-# ╠═6d6228cb-65cf-4716-905f-c673d667e05a
+# ╠═2982eabe-c75e-4bd8-80f0-b63c8b769e79
 # ╠═4e41761e-5e4b-42a2-a6a3-a73549d798e4
 # ╟─bf81ba39-23e4-461c-b0b6-cca578f3ab92
-# ╠═d7ee1d81-cb92-4ef4-a9ed-11429312319b
-# ╟─5b1f5914-3d54-4ed5-8b04-491aa2392038
 # ╠═0b715643-a280-4287-9f62-68e520b35e2d
-# ╠═a04a07c4-86b9-47db-95bf-06f4492d960b
+# ╟─a04a07c4-86b9-47db-95bf-06f4492d960b
+# ╟─32269cbe-91ce-4f10-bdde-7244b0709dfc
+# ╠═532ddbc4-f1d9-4de1-9eec-33851e7cc609
+# ╟─73a8cc54-fdd8-47b3-b22d-5262b06c47d3
+# ╠═e93d993d-490f-4a94-a339-5c77add7bbac
 # ╠═2926c2b6-e5df-4e1a-a03a-5a1c3b738f6f
-# ╟─cf50cf34-3f1a-4782-986b-3d1685ee2ad8
-# ╠═bcc674e4-7897-41c6-9016-fd9383305e6b
+# ╟─6ca2328e-09c9-4da3-bfa8-890fc44e3a28
+# ╠═d16870fa-b830-4824-8fdb-6f7e2df82770
+# ╠═8131a8a9-32ff-4595-ae70-5c684482fd0e
+# ╟─a6faf6e5-c545-42a1-b728-9d5b070917b0
+# ╠═4ab20246-e7d1-4662-ac8f-3a86fa2c1330
+# ╟─e5973e7b-9e1f-4706-b8b4-911b7b162c17
+# ╠═c62e39c8-a37d-4cc9-892a-cec0113435c4
+# ╠═2dd64f53-6bed-47f7-bd46-7876e5c8e662
+# ╟─34dc9417-ee42-48e9-ad3b-bebaaf2adfa9
+# ╠═b18ec6ab-6a40-4929-929d-e49cf215cc4b
+# ╠═ebf075ff-234c-41dc-95f1-bfe742e1bc57
+# ╠═2681e794-716b-4d38-81ab-273adfcdb5c7
+# ╠═5fae51c2-d1b9-4f0f-b109-8f57d084e581
 # ╟─c102812d-dabf-4bb6-9f4b-5f7d7372f2b5
 # ╟─6d621dd7-8042-4427-9eba-af2ff10b1c69
 # ╠═a8bca7e4-c81c-463b-b16c-8ef93a6b6acf
 # ╟─c876e8b3-59ff-4cb7-a5c3-465b576626a6
-# ╠═6206bdbf-67e2-4469-98dc-3e62b75de93d
-# ╠═a4e3bf91-00e8-4b5e-8b0c-04e39b825740
 # ╟─9bb81a4a-7c85-4cba-804a-d9e8a3d06141
-# ╠═57b5fc12-eb47-4d9c-b68d-4601d14175d1
 # ╟─47de77ad-8218-4d5a-8e92-5ea654d598ff
-# ╠═fa2e705e-83d5-4c0d-97ce-e409f44dcdc9
 # ╟─128fdb37-79a4-4e6e-8c0b-e78e307d9830
-# ╠═e3c3bd0a-ba1c-4550-87e9-cf0180781596
-# ╠═55ec8015-8a0a-49bb-b77e-d330db58c369
-# ╠═bffa2de7-5a63-4022-a671-fa3b62b63661
 # ╟─c6c40aff-10a2-419f-97fb-f4c25da081ad
-# ╠═b18ec6ab-6a40-4929-929d-e49cf215cc4b
-# ╠═8c6c3cd8-4fcb-4330-8990-3142219d2493
-# ╟─870d2895-dfb4-47aa-933c-b359e5237e0e
-# ╠═c080b635-e58f-4f7b-9b9e-b83719c28f84
-# ╟─af959dbe-4fe7-4484-bf62-05813a8dd73e
-# ╠═a939119b-6ac4-4322-86bd-22bb6562d268
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
